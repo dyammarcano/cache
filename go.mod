@@ -4,6 +4,8 @@ go 1.22
 
 require (
 	github.com/dgraph-io/badger/v4 v4.2.0
+	github.com/google/uuid v1.1.2
+	github.com/rs/xid v1.5.0
 	github.com/rs/zerolog v1.32.0
 	github.com/stretchr/testify v1.9.0
 )
