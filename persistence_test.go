@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"os"
 	"path/filepath"
@@ -66,7 +65,7 @@ func TestStore_BulkInsert(t *testing.T) {
 	data := make([]string, 1000)
 
 	for i := 0; i < len(data); i++ {
-		data[i] = uuid.New().String()
+		data[i] = "###########################################################################"
 	}
 
 	for _, v := range data {
