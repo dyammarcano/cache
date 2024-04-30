@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var ss *Store
+var ss *Cache
 
 func TestMain(m *testing.M) {
 	cfg := &Config{

@@ -12,7 +12,7 @@ import (
 )
 
 type (
-	Store struct {
+	Cache struct {
 		db      *badger.DB
 		mu      sync.RWMutex
 		entries []*badger.Entry
@@ -25,7 +25,7 @@ type (
 	}
 )
 
-func NewStore(ctx context.Context, cfg *Config) (*Store, error) {
+func NewStore(ctx context.Context, cfg *Config) (*Cache, error) {
 	if !cfg.validated {
 		return nil, fmt.Errorf("config not validated")
 	}
@@ -35,7 +35,7 @@ func NewStore(ctx context.Context, cfg *Config) (*Store, error) {
 		return nil, err
 	}
 
-	store := &Store{
+	store := &Cache{
 		db:      db,
 		mu:      sync.RWMutex{},
 		entries: []*badger.Entry{},
@@ -65,15 +65,15 @@ func NewStore(ctx context.Context, cfg *Config) (*Store, error) {
 	return store, nil
 }
 
-func (s *Store) batchWriteAction() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *Cache) batchWriteAction() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if len(s.entries) > 0 {
-		nb := s.db.NewWriteBatch()
+	if len(c.entries) > 0 {
+		nb := c.db.NewWriteBatch()
 		defer nb.Cancel()
 
-		for _, b := range s.entries {
+		for _, b := range c.entries {
 			if err := nb.SetEntry(b); err != nil {
 				return err
 			}
@@ -83,17 +83,17 @@ func (s *Store) batchWriteAction() error {
 			return err
 		}
 
-		s.entries = []*badger.Entry{}
+		c.entries = []*badger.Entry{}
 	}
 
 	return nil
 }
 
-func (s *Store) batchDeleteAction(batch []badger.Entry) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *Cache) batchDeleteAction(batch []badger.Entry) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	nb := s.db.NewWriteBatch()
+	nb := c.db.NewWriteBatch()
 	defer nb.Cancel()
 
 	for _, b := range batch {
@@ -109,47 +109,47 @@ func (s *Store) batchDeleteAction(batch []badger.Entry) error {
 	return nil
 }
 
-func (s *Store) MakeKey(prefix string) []byte {
+func (c *Cache) MakeKey(prefix string) []byte {
 	return []byte(fmt.Sprintf("%s:%s", prefix, xid.New().String()))
 }
 
-func (s *Store) addEntryToBatch(batch *badger.Entry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (c *Cache) addEntryToBatch(batch *badger.Entry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	s.entries = append(s.entries, batch)
+	c.entries = append(c.entries, batch)
 }
 
-func (s *Store) AddToBatch(batch *badger.Entry) {
-	s.addEntryToBatch(batch)
+func (c *Cache) AddToBatch(batch *badger.Entry) {
+	c.addEntryToBatch(batch)
 }
 
-func (s *Store) AddNewEntryToBatch(key, value []byte, expiresAt time.Duration) {
-	s.addEntryToBatch(&badger.Entry{Key: key, Value: value, ExpiresAt: uint64(expiresAt)})
+func (c *Cache) AddNewEntryToBatch(key, value []byte, expiresAt time.Duration) {
+	c.addEntryToBatch(&badger.Entry{Key: key, Value: value, ExpiresAt: uint64(expiresAt)})
 }
 
-func (s *Store) Set(prefix string, value []byte) error {
-	return s.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(s.MakeKey(prefix), value)
+func (c *Cache) Set(prefix string, value []byte) error {
+	return c.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(c.MakeKey(prefix), value)
 	})
 }
 
-func (s *Store) SetExpire(prefix string, value []byte, expire time.Duration) error {
-	var entry = badger.NewEntry(s.MakeKey(prefix), value)
+func (c *Cache) SetExpire(prefix string, value []byte, expire time.Duration) error {
+	var entry = badger.NewEntry(c.MakeKey(prefix), value)
 	if expire > time.Second {
 		entry = entry.WithTTL(expire)
 	}
-	return s.db.Update(func(txn *badger.Txn) error {
+	return c.db.Update(func(txn *badger.Txn) error {
 		return txn.SetEntry(entry)
 	})
 }
 
-func (s *Store) HasPrefix(prefix string, key []byte) (bool, error) {
+func (c *Cache) HasPrefix(prefix string, key []byte) (bool, error) {
 	var has bool
-	err := s.db.View(func(txn *badger.Txn) error {
+	err := c.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		key = []byte(fmt.Sprintf("%s:%s", prefix, key))
+		key = c.MakeKey(prefix)
 		for it.Seek(key); it.ValidForPrefix(key); it.Next() {
 			has = true
 		}
@@ -158,37 +158,9 @@ func (s *Store) HasPrefix(prefix string, key []byte) (bool, error) {
 	return has, err
 }
 
-func (s *Store) HasAllPrefix(prefix string, keys [][]byte) (bool, error) {
-	var has bool
-	err := s.db.View(func(txn *badger.Txn) error {
-		for _, k := range keys {
-			if _, err := txn.Get([]byte(fmt.Sprintf("%s:%s", prefix, k))); err != nil {
-				return err
-			}
-		}
-		has = true
-		return nil
-	})
-	return has, err
-}
-
-func (s *Store) HasAnyPrefix(prefix string, keys [][]byte) (bool, error) {
-	var has bool
-	err := s.db.View(func(txn *badger.Txn) error {
-		for _, k := range keys {
-			if _, err := txn.Get([]byte(fmt.Sprintf("%s:%s", prefix, k))); err == nil {
-				has = true
-				break
-			}
-		}
-		return nil
-	})
-	return has, err
-}
-
-func (s *Store) Get(prefix string) ([]byte, error) {
+func (c *Cache) Get(prefix string) ([]byte, error) {
 	value := make([]byte, 0)
-	err := s.db.View(func(txn *badger.Txn) error {
+	err := c.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
@@ -204,9 +176,9 @@ func (s *Store) Get(prefix string) ([]byte, error) {
 	return value, err
 }
 
-func (s *Store) GetOnce(prefix string) ([]byte, error) {
+func (c *Cache) GetOnce(prefix string) ([]byte, error) {
 	value := make([]byte, 0)
-	err := s.db.Update(func(txn *badger.Txn) error {
+	err := c.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
@@ -225,14 +197,14 @@ func (s *Store) GetOnce(prefix string) ([]byte, error) {
 	return value, err
 }
 
-func (s *Store) GetKeysPages(prefix []byte, pageSize int) ([]KeysPage, error) {
+func (c *Cache) GetKeysPages(prefix []byte, pageSize int) ([]KeysPage, error) {
 	var (
 		keys     []string
 		keysPage []KeysPage
 		page     int
 	)
 
-	err := s.db.View(func(txn *badger.Txn) error {
+	err := c.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
@@ -253,13 +225,12 @@ func (s *Store) GetKeysPages(prefix []byte, pageSize int) ([]KeysPage, error) {
 	return keysPage, err
 }
 
-func (s *Store) GetLimit(prefix []byte, limit int) ([][]byte, error) {
-	var values [][]byte
-	err := s.db.View(func(txn *badger.Txn) error {
-		values = [][]byte{} // to avoid nil
+func (c *Cache) GetLimit(prefix string, limit int) ([][]byte, error) {
+	values := make([][]byte, 0)
+	err := c.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix) && len(values) < limit; it.Next() {
+		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)) && len(values) < limit; it.Next() {
 			value, err := it.Item().ValueCopy(nil)
 			if err != nil {
 				return err
@@ -271,28 +242,28 @@ func (s *Store) GetLimit(prefix []byte, limit int) ([][]byte, error) {
 	return values, err
 }
 
-func (s *Store) GetStream(prefix []byte) (chan *badger.Item, error) {
-	forward := make(chan *badger.Item, 1000)
+func (c *Cache) GetStream(prefix string) (chan *badger.Item, error) {
+	forward := make(chan *badger.Item)
 	go func() {
 		defer close(forward)
-		err := s.db.View(func(txn *badger.Txn) error {
+		err := c.db.View(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer it.Close()
-			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
 				forward <- it.Item()
 			}
 			return nil
 		})
 		if err != nil {
-			zlog.Error().Msgf("error: %s", err)
+			zlog.Error().Msgf("error: %v", err)
 		}
 	}()
 	return forward, nil
 }
 
-func (s *Store) Exists(key string) (bool, error) {
+func (c *Cache) Exists(key string) (bool, error) {
 	var exists bool
-	err := s.db.View(func(tx *badger.Txn) error {
+	err := c.db.View(func(tx *badger.Txn) error {
 		if val, err := tx.Get([]byte(key)); err != nil {
 			return err
 		} else if val != nil {
@@ -306,12 +277,12 @@ func (s *Store) Exists(key string) (bool, error) {
 	return exists, err
 }
 
-func (s *Store) ValuesPrefix(prefix []byte) ([][]byte, error) {
-	var values [][]byte
-	err := s.db.View(func(txn *badger.Txn) error {
+func (c *Cache) ValuesPrefix(prefix string) ([][]byte, error) {
+	values := make([][]byte, 0)
+	err := c.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
 			value, err := it.Item().ValueCopy(nil)
 			if err != nil {
 				return err
@@ -323,18 +294,17 @@ func (s *Store) ValuesPrefix(prefix []byte) ([][]byte, error) {
 	return values, err
 }
 
-func (s *Store) ValuesPrefixLimit(prefix []byte, limit int) ([][]byte, error) {
-	var values [][]byte
+func (c *Cache) ValuesPrefixLimit(prefix string, limit int) ([][]byte, error) {
+	values := make([][]byte, 0)
 	if len(prefix) == 0 {
 		return values, errors.New("prefix should not be empty")
 	}
-	err := s.db.View(func(txn *badger.Txn) error {
-		values = [][]byte{} // to avoid nil
+	err := c.db.View(func(txn *badger.Txn) error {
 		opt := badger.DefaultIteratorOptions
 		opt.Reverse = false
 		it := txn.NewIterator(opt)
 		defer it.Close()
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
 			value, err := it.Item().ValueCopy(nil)
 			if err != nil {
 				return err
@@ -350,29 +320,27 @@ func (s *Store) ValuesPrefixLimit(prefix []byte, limit int) ([][]byte, error) {
 	return values, err
 }
 
-func (s *Store) FindLatestKey(prefix []byte) ([]byte, error) {
+func (c *Cache) FindLatestKey(prefix string) ([]byte, error) {
 	var latestKey []byte
-	err := s.db.View(func(txn *badger.Txn) error {
+	err := c.db.View(func(txn *badger.Txn) error {
 		latestKey = []byte{} // to avoid nil
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		it.Seek(prefix)
-		for ; it.Valid(); it.Next() {
-			k := it.Item().Key()
-			if !bytes.HasPrefix(k, prefix) {
+		for it.Seek([]byte(prefix)); it.Valid(); it.Next() {
+			if !bytes.HasPrefix(it.Item().Key(), []byte(prefix)) {
 				// Stop when the prefix doesn't match
 				break
 			}
-			latestKey = k[len(prefix)+1:]
+			latestKey = it.Item().Key()[len(prefix)+1:]
 		}
 		return nil
 	})
 	return latestKey, err
 }
 
-func (s *Store) Items() ([]*badger.Item, error) {
+func (c *Cache) Items() ([]*badger.Item, error) {
 	items := make([]*badger.Item, 0)
-	err := s.db.View(func(txn *badger.Txn) error {
+	err := c.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -383,9 +351,9 @@ func (s *Store) Items() ([]*badger.Item, error) {
 	return items, err
 }
 
-func (s *Store) CountPrefix(prefix string) (int, error) {
+func (c *Cache) CountPrefix(prefix string) (int, error) {
 	var count int
-	err := s.db.View(func(txn *badger.Txn) error {
+	err := c.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
@@ -399,8 +367,8 @@ func (s *Store) CountPrefix(prefix string) (int, error) {
 	return count, err
 }
 
-func (s *Store) Delete(key []byte) error {
-	return s.db.Update(func(txn *badger.Txn) error {
+func (c *Cache) Delete(key []byte) error {
+	return c.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek(key); it.ValidForPrefix(key); it.Next() {
@@ -412,8 +380,8 @@ func (s *Store) Delete(key []byte) error {
 	})
 }
 
-func (s *Store) DeleteKeys(keys [][]byte) error {
-	return s.db.Update(func(txn *badger.Txn) error {
+func (c *Cache) DeleteKeys(keys [][]byte) error {
+	return c.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for _, k := range keys {
@@ -425,8 +393,8 @@ func (s *Store) DeleteKeys(keys [][]byte) error {
 	})
 }
 
-func (s *Store) DeleteAll() error {
-	return s.db.Update(func(txn *badger.Txn) error {
+func (c *Cache) DeleteAll() error {
+	return c.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -438,6 +406,6 @@ func (s *Store) DeleteAll() error {
 	})
 }
 
-func (s *Store) DropPrefix(prefix string) error {
-	return s.Delete([]byte(prefix))
+func (c *Cache) DropPrefix(prefix string) error {
+	return c.Delete([]byte(prefix))
 }
