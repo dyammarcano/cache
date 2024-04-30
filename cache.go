@@ -6,7 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dgraph-io/badger/v4"
-	"github.com/rs/xid"
+	"hash"
+	"hash/fnv"
 	"sync"
 	"time"
 )
@@ -17,6 +18,7 @@ type (
 		mu      sync.RWMutex
 		entries []*badger.Entry
 		ctx     context.Context
+		hasher  hash.Hash64
 	}
 
 	KeysPage struct {
@@ -40,6 +42,7 @@ func NewStore(ctx context.Context, cfg *Config) (*Cache, error) {
 		mu:      sync.RWMutex{},
 		entries: []*badger.Entry{},
 		ctx:     ctx,
+		hasher:  fnv.New64a(),
 	}
 
 	ticker := time.NewTicker(time.Microsecond)
@@ -109,8 +112,12 @@ func (c *Cache) batchDeleteAction(batch []badger.Entry) error {
 	return nil
 }
 
-func (c *Cache) MakeKey(prefix string) []byte {
-	return []byte(fmt.Sprintf("%s:%s", prefix, xid.New().String()))
+func (c *Cache) MakeKey(prefix string, data []byte) []byte {
+	c.hasher.Reset()
+	if _, err := c.hasher.Write(data); err != nil {
+		return nil
+	}
+	return []byte(fmt.Sprintf("%s:%x", prefix, c.hasher.Sum(nil)))
 }
 
 func (c *Cache) addEntryToBatch(batch *badger.Entry) {
@@ -130,12 +137,12 @@ func (c *Cache) AddNewEntryToBatch(key, value []byte, expiresAt time.Duration) {
 
 func (c *Cache) Set(prefix string, value []byte) error {
 	return c.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(c.MakeKey(prefix), value)
+		return txn.Set(c.MakeKey(prefix, value), value)
 	})
 }
 
 func (c *Cache) SetExpire(prefix string, value []byte, expire time.Duration) error {
-	var entry = badger.NewEntry(c.MakeKey(prefix), value)
+	var entry = badger.NewEntry(c.MakeKey(prefix, value), value)
 	if expire > time.Second {
 		entry = entry.WithTTL(expire)
 	}
@@ -144,19 +151,19 @@ func (c *Cache) SetExpire(prefix string, value []byte, expire time.Duration) err
 	})
 }
 
-func (c *Cache) HasPrefix(prefix string, key []byte) (bool, error) {
-	var has bool
-	err := c.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
-		defer it.Close()
-		key = c.MakeKey(prefix)
-		for it.Seek(key); it.ValidForPrefix(key); it.Next() {
-			has = true
-		}
-		return nil
-	})
-	return has, err
-}
+//func (c *Cache) HasPrefix(prefix string, key []byte) (bool, error) {
+//	var has bool
+//	err := c.db.View(func(txn *badger.Txn) error {
+//		it := txn.NewIterator(badger.DefaultIteratorOptions)
+//		defer it.Close()
+//		key = c.MakeKey(prefix,key)
+//		for it.Seek(key); it.ValidForPrefix(key); it.Next() {
+//			has = true
+//		}
+//		return nil
+//	})
+//	return has, err
+//}
 
 func (c *Cache) Get(prefix string) ([]byte, error) {
 	value := make([]byte, 0)

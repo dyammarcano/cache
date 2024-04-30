@@ -39,8 +39,9 @@ func TestMain(m *testing.M) {
 }
 
 func TestStore_MakeKey(t *testing.T) {
-	key := ss.MakeKey("testing")
-	assert.Equal(t, 28, len(key))
+	key := ss.MakeKey("testing", []byte("#########################################################3"))
+	assert.Equal(t, 24, len(key))
+	t.Log(string(key))
 }
 
 func TestStore_SetGet(t *testing.T) {
