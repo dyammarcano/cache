@@ -22,8 +22,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Test NewStore
-	s, err := NewStore(context.Background(), cfg)
+	// Test NewKV
+	s, err := NewKV(context.Background(), cfg)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

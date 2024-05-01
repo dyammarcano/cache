@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var global *KV
+
 type (
 	KV struct {
 		db      *badger.DB
@@ -27,7 +29,11 @@ type (
 	}
 )
 
-func NewStore(ctx context.Context, cfg *Config) (*KV, error) {
+func SetGlobal(kv *KV) {
+	global = kv
+}
+
+func NewKV(ctx context.Context, cfg *Config) (*KV, error) {
 	if !cfg.validated {
 		return nil, fmt.Errorf("config not validated")
 	}
@@ -37,7 +43,7 @@ func NewStore(ctx context.Context, cfg *Config) (*KV, error) {
 		return nil, err
 	}
 
-	store := &KV{
+	kv := &KV{
 		db:      db,
 		mu:      sync.RWMutex{},
 		entries: []*badger.Entry{},
@@ -51,13 +57,13 @@ func NewStore(ctx context.Context, cfg *Config) (*KV, error) {
 		for {
 			select {
 			case <-ctx.Done():
-				if err = store.db.Close(); err != nil {
+				if err = kv.db.Close(); err != nil {
 					zlog.Error().Msgf("Failed to close ss: %v", err)
 				}
 				return
 			case <-ticker.C:
-				if len(store.entries) > 0 {
-					if err = store.batchWriteAction(); err != nil {
+				if len(kv.entries) > 0 {
+					if err = kv.batchWriteAction(); err != nil {
 						zlog.Error().Msgf("failed to batch write: %v", err)
 					}
 				}
@@ -65,7 +71,7 @@ func NewStore(ctx context.Context, cfg *Config) (*KV, error) {
 		}
 	}()
 
-	return store, nil
+	return kv, nil
 }
 
 func (k *KV) batchWriteAction() error {
