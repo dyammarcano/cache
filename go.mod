@@ -1,4 +1,4 @@
-module github.com/dyammarcano/cache
+module github.com/dyammarcano/kv
 
 go 1.22
 

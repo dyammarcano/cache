@@ -1,4 +1,4 @@
-package cache
+package kv
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ import (
 )
 
 type (
-	Cache struct {
+	KV struct {
 		db      *badger.DB
 		mu      sync.RWMutex
 		entries []*badger.Entry
@@ -27,7 +27,7 @@ type (
 	}
 )
 
-func NewStore(ctx context.Context, cfg *Config) (*Cache, error) {
+func NewStore(ctx context.Context, cfg *Config) (*KV, error) {
 	if !cfg.validated {
 		return nil, fmt.Errorf("config not validated")
 	}
@@ -37,7 +37,7 @@ func NewStore(ctx context.Context, cfg *Config) (*Cache, error) {
 		return nil, err
 	}
 
-	store := &Cache{
+	store := &KV{
 		db:      db,
 		mu:      sync.RWMutex{},
 		entries: []*badger.Entry{},
@@ -68,15 +68,15 @@ func NewStore(ctx context.Context, cfg *Config) (*Cache, error) {
 	return store, nil
 }
 
-func (c *Cache) batchWriteAction() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (k *KV) batchWriteAction() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 
-	if len(c.entries) > 0 {
-		nb := c.db.NewWriteBatch()
+	if len(k.entries) > 0 {
+		nb := k.db.NewWriteBatch()
 		defer nb.Cancel()
 
-		for _, b := range c.entries {
+		for _, b := range k.entries {
 			if err := nb.SetEntry(b); err != nil {
 				return err
 			}
@@ -86,17 +86,17 @@ func (c *Cache) batchWriteAction() error {
 			return err
 		}
 
-		c.entries = []*badger.Entry{}
+		k.entries = []*badger.Entry{}
 	}
 
 	return nil
 }
 
-func (c *Cache) batchDeleteAction(batch []badger.Entry) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (k *KV) batchDeleteAction(batch []badger.Entry) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 
-	nb := c.db.NewWriteBatch()
+	nb := k.db.NewWriteBatch()
 	defer nb.Cancel()
 
 	for _, b := range batch {
@@ -112,46 +112,46 @@ func (c *Cache) batchDeleteAction(batch []badger.Entry) error {
 	return nil
 }
 
-func (c *Cache) MakeKey(prefix string, data []byte) []byte {
-	c.hasher.Reset()
-	if _, err := c.hasher.Write(data); err != nil {
+func (k *KV) MakeKey(prefix string, data []byte) []byte {
+	k.hasher.Reset()
+	if _, err := k.hasher.Write(data); err != nil {
 		return nil
 	}
-	return []byte(fmt.Sprintf("%s:%x", prefix, c.hasher.Sum(nil)))
+	return []byte(fmt.Sprintf("%s:%x", prefix, k.hasher.Sum(nil)))
 }
 
-func (c *Cache) addEntryToBatch(batch *badger.Entry) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (k *KV) addEntryToBatch(batch *badger.Entry) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
 
-	c.entries = append(c.entries, batch)
+	k.entries = append(k.entries, batch)
 }
 
-func (c *Cache) AddToBatch(batch *badger.Entry) {
-	c.addEntryToBatch(batch)
+func (k *KV) AddToBatch(batch *badger.Entry) {
+	k.addEntryToBatch(batch)
 }
 
-func (c *Cache) AddNewEntryToBatch(key, value []byte, expiresAt time.Duration) {
-	c.addEntryToBatch(&badger.Entry{Key: key, Value: value, ExpiresAt: uint64(expiresAt)})
+func (k *KV) AddNewEntryToBatch(key, value []byte, expiresAt time.Duration) {
+	k.addEntryToBatch(&badger.Entry{Key: key, Value: value, ExpiresAt: uint64(expiresAt)})
 }
 
-func (c *Cache) Set(prefix string, value []byte) error {
-	return c.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(c.MakeKey(prefix, value), value)
+func (k *KV) Set(prefix string, value []byte) error {
+	return k.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(k.MakeKey(prefix, value), value)
 	})
 }
 
-func (c *Cache) SetExpire(prefix string, value []byte, expire time.Duration) error {
-	var entry = badger.NewEntry(c.MakeKey(prefix, value), value)
+func (k *KV) SetExpire(prefix string, value []byte, expire time.Duration) error {
+	var entry = badger.NewEntry(k.MakeKey(prefix, value), value)
 	if expire > time.Second {
 		entry = entry.WithTTL(expire)
 	}
-	return c.db.Update(func(txn *badger.Txn) error {
+	return k.db.Update(func(txn *badger.Txn) error {
 		return txn.SetEntry(entry)
 	})
 }
 
-//func (c *Cache) HasPrefix(prefix string, key []byte) (bool, error) {
+//func (c *KV) HasPrefix(prefix string, key []byte) (bool, error) {
 //	var has bool
 //	err := c.db.View(func(txn *badger.Txn) error {
 //		it := txn.NewIterator(badger.DefaultIteratorOptions)
@@ -165,9 +165,9 @@ func (c *Cache) SetExpire(prefix string, value []byte, expire time.Duration) err
 //	return has, err
 //}
 
-func (c *Cache) Get(prefix string) ([]byte, error) {
+func (k *KV) Get(prefix string) ([]byte, error) {
 	value := make([]byte, 0)
-	err := c.db.View(func(txn *badger.Txn) error {
+	err := k.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
@@ -183,9 +183,9 @@ func (c *Cache) Get(prefix string) ([]byte, error) {
 	return value, err
 }
 
-func (c *Cache) GetOnce(prefix string) ([]byte, error) {
+func (k *KV) GetOnce(prefix string) ([]byte, error) {
 	value := make([]byte, 0)
-	err := c.db.Update(func(txn *badger.Txn) error {
+	err := k.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
@@ -204,14 +204,14 @@ func (c *Cache) GetOnce(prefix string) ([]byte, error) {
 	return value, err
 }
 
-func (c *Cache) GetKeysPages(prefix []byte, pageSize int) ([]KeysPage, error) {
+func (k *KV) GetKeysPages(prefix []byte, pageSize int) ([]KeysPage, error) {
 	var (
 		keys     []string
 		keysPage []KeysPage
 		page     int
 	)
 
-	err := c.db.View(func(txn *badger.Txn) error {
+	err := k.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
@@ -232,9 +232,9 @@ func (c *Cache) GetKeysPages(prefix []byte, pageSize int) ([]KeysPage, error) {
 	return keysPage, err
 }
 
-func (c *Cache) GetLimit(prefix string, limit int) ([][]byte, error) {
+func (k *KV) GetLimit(prefix string, limit int) ([][]byte, error) {
 	values := make([][]byte, 0)
-	err := c.db.View(func(txn *badger.Txn) error {
+	err := k.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)) && len(values) < limit; it.Next() {
@@ -249,11 +249,11 @@ func (c *Cache) GetLimit(prefix string, limit int) ([][]byte, error) {
 	return values, err
 }
 
-func (c *Cache) GetStream(prefix string) (chan *badger.Item, error) {
+func (k *KV) GetStream(prefix string) (chan *badger.Item, error) {
 	forward := make(chan *badger.Item)
 	go func() {
 		defer close(forward)
-		err := c.db.View(func(txn *badger.Txn) error {
+		err := k.db.View(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badger.DefaultIteratorOptions)
 			defer it.Close()
 			for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
@@ -268,9 +268,9 @@ func (c *Cache) GetStream(prefix string) (chan *badger.Item, error) {
 	return forward, nil
 }
 
-func (c *Cache) Exists(key string) (bool, error) {
+func (k *KV) Exists(key string) (bool, error) {
 	var exists bool
-	err := c.db.View(func(tx *badger.Txn) error {
+	err := k.db.View(func(tx *badger.Txn) error {
 		if val, err := tx.Get([]byte(key)); err != nil {
 			return err
 		} else if val != nil {
@@ -284,9 +284,9 @@ func (c *Cache) Exists(key string) (bool, error) {
 	return exists, err
 }
 
-func (c *Cache) ValuesPrefix(prefix string) ([][]byte, error) {
+func (k *KV) ValuesPrefix(prefix string) ([][]byte, error) {
 	values := make([][]byte, 0)
-	err := c.db.View(func(txn *badger.Txn) error {
+	err := k.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
@@ -301,12 +301,12 @@ func (c *Cache) ValuesPrefix(prefix string) ([][]byte, error) {
 	return values, err
 }
 
-func (c *Cache) ValuesPrefixLimit(prefix string, limit int) ([][]byte, error) {
+func (k *KV) ValuesPrefixLimit(prefix string, limit int) ([][]byte, error) {
 	values := make([][]byte, 0)
 	if len(prefix) == 0 {
 		return values, errors.New("prefix should not be empty")
 	}
-	err := c.db.View(func(txn *badger.Txn) error {
+	err := k.db.View(func(txn *badger.Txn) error {
 		opt := badger.DefaultIteratorOptions
 		opt.Reverse = false
 		it := txn.NewIterator(opt)
@@ -327,9 +327,9 @@ func (c *Cache) ValuesPrefixLimit(prefix string, limit int) ([][]byte, error) {
 	return values, err
 }
 
-func (c *Cache) FindLatestKey(prefix string) ([]byte, error) {
+func (k *KV) FindLatestKey(prefix string) ([]byte, error) {
 	var latestKey []byte
-	err := c.db.View(func(txn *badger.Txn) error {
+	err := k.db.View(func(txn *badger.Txn) error {
 		latestKey = []byte{} // to avoid nil
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
@@ -345,9 +345,9 @@ func (c *Cache) FindLatestKey(prefix string) ([]byte, error) {
 	return latestKey, err
 }
 
-func (c *Cache) Items() ([]*badger.Item, error) {
+func (k *KV) Items() ([]*badger.Item, error) {
 	items := make([]*badger.Item, 0)
-	err := c.db.View(func(txn *badger.Txn) error {
+	err := k.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -358,9 +358,9 @@ func (c *Cache) Items() ([]*badger.Item, error) {
 	return items, err
 }
 
-func (c *Cache) CountPrefix(prefix string) (int, error) {
+func (k *KV) CountPrefix(prefix string) (int, error) {
 	var count int
-	err := c.db.View(func(txn *badger.Txn) error {
+	err := k.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
@@ -374,8 +374,8 @@ func (c *Cache) CountPrefix(prefix string) (int, error) {
 	return count, err
 }
 
-func (c *Cache) Delete(key []byte) error {
-	return c.db.Update(func(txn *badger.Txn) error {
+func (k *KV) Delete(key []byte) error {
+	return k.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek(key); it.ValidForPrefix(key); it.Next() {
@@ -387,8 +387,8 @@ func (c *Cache) Delete(key []byte) error {
 	})
 }
 
-func (c *Cache) DeleteKeys(keys [][]byte) error {
-	return c.db.Update(func(txn *badger.Txn) error {
+func (k *KV) DeleteKeys(keys [][]byte) error {
+	return k.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for _, k := range keys {
@@ -400,8 +400,8 @@ func (c *Cache) DeleteKeys(keys [][]byte) error {
 	})
 }
 
-func (c *Cache) DeleteAll() error {
-	return c.db.Update(func(txn *badger.Txn) error {
+func (k *KV) DeleteAll() error {
+	return k.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -413,6 +413,6 @@ func (c *Cache) DeleteAll() error {
 	})
 }
 
-func (c *Cache) DropPrefix(prefix string) error {
-	return c.Delete([]byte(prefix))
+func (k *KV) DropPrefix(prefix string) error {
+	return k.Delete([]byte(prefix))
 }

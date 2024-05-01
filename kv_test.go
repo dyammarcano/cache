@@ -1,4 +1,4 @@
-package cache
+package kv
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var ss *Cache
+var ss *KV
 
 func TestMain(m *testing.M) {
 	cfg := &Config{
