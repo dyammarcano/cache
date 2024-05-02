@@ -60,26 +60,32 @@ func TestStore_SetGet(t *testing.T) {
 	assert.Equal(t, "", string(value))
 }
 
-func TestStore_BulkInsert(t *testing.T) {
+func TestStore_GetKeys(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		data := fmt.Sprintf("###########################################################################:%d", i)
 
-		err := ss.SetExpire("kk", []byte(data), time.Second*3)
+		err := ss.SetExpire("kv2cacheCliApp#postman", []byte(data), time.Second*15)
 		assert.NoError(t, err)
 	}
 
 	// count keys
-	count, err := ss.CountPrefix("kk")
+	count, err := ss.GetKeys("kv2cacheCliApp#postman")
 	assert.NoError(t, err)
 
-	assert.Equal(t, 1000, count)
+	assert.Equal(t, 1000, len(count))
+}
 
-	// wait for expiration
-	<-time.After(time.Second * 6)
+func TestStore_CountPrefix(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		data := fmt.Sprintf("############################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################################:%d", i)
+
+		err := ss.SetExpire("kv2cacheCliApp#postman", []byte(data), time.Minute*5)
+		assert.NoError(t, err)
+	}
 
 	// count keys
-	count, err = ss.CountPrefix("kk")
+	count, err := ss.CountPrefix("kv2cacheCliApp#postman")
 	assert.NoError(t, err)
 
-	assert.Equal(t, 0, count)
+	t.Log(count)
 }

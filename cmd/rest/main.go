@@ -67,7 +67,8 @@ func restCmd(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("error getting datastore flag: %w", err)
 		}
 
-		datastoreStr := filepath.Clean(datastore)
+		datastoreStr := filepath.Join(os.TempDir(), "badger", "testing")
+		// TODO commented for debuging datastoreStr := filepath.Clean(datastore)
 
 		if _, err = os.Stat(datastore); os.IsNotExist(err) {
 			if err := os.MkdirAll(datastore, os.ModePerm); err != nil {
@@ -115,12 +116,12 @@ func restServer(ctx context.Context, datastore, port string) error {
 	r.Group(func(r chi.Router) {
 		r.Get("/keys/{key}", func(w http.ResponseWriter, r *http.Request) {
 			key := chi.URLParam(r, "key")
-			keys, err := newKV.Keys(fmt.Sprintf("%s#%s", storePrefix, key))
+			keys, err := newKV.GetKeys(fmt.Sprintf("%s#%s", storePrefix, key))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			w.Write([]byte(fmt.Sprintf("Keys: %v", keys)))
+			w.Write([]byte(fmt.Sprintf("GetKeys: %v", keys)))
 		})
 
 		r.Get("/keys/count/{key}", func(w http.ResponseWriter, r *http.Request) {
@@ -152,17 +153,13 @@ func restServer(ctx context.Context, datastore, port string) error {
 			key := chi.URLParam(r, "key")
 			value := r.FormValue("value")
 			ttl := r.FormValue("ttl")
-			data := base64.StdEncoding.EncodeToString([]byte(value))
-			if data == "" {
-				http.Error(w, "value is empty", http.StatusBadRequest)
-				return
-			}
-			if err := r.ParseForm(); err != nil {
+
+			if err = r.ParseForm(); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 			if ttl == "" {
-				if err := newKV.Set(fmt.Sprintf("%s#%s", storePrefix, key), []byte(data)); err != nil {
+				if err = newKV.Set(fmt.Sprintf("%s#%s", storePrefix, key), []byte(value)); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
@@ -175,7 +172,7 @@ func restServer(ctx context.Context, datastore, port string) error {
 				return
 			}
 
-			if err := newKV.SetExpire(fmt.Sprintf("%s#%s", storePrefix, key), []byte(data), ttlTime); err != nil {
+			if err = newKV.SetExpire(fmt.Sprintf("%s#%s", storePrefix, key), []byte(value), ttlTime); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

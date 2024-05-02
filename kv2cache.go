@@ -300,10 +300,24 @@ func (k *KV) Items() ([]*badger.Item, error) {
 func (k *KV) CountPrefix(prefix string) (int, error) {
 	var count int
 	err := k.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
 			item := it.Item()
+			key := item.Key()
+
+			{ // TODO for debuging purpose
+				err := item.Value(func(v []byte) error {
+					fmt.Printf("key=%s, value=%s\n", key, v)
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+			}
+
 			if item.ExpiresAt() != 0 {
 				count++
 			}
@@ -356,16 +370,31 @@ func (k *KV) DropPrefix(prefix string) error {
 	return k.Delete([]byte(prefix))
 }
 
-func (k *KV) Keys(prefix string) ([]string, error) {
+func (k *KV) GetKeys(prefixStr string) ([]string, error) {
 	var keys []string
 
 	err := k.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
 		defer it.Close()
-		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
+		prefix := []byte(prefixStr)
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
 			item := it.Item()
+			key := item.Key()
+
+			{ // TODO for debuging purpose
+				err := item.Value(func(v []byte) error {
+					fmt.Printf("key=%s, value=%s\n", key, v)
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+			}
+
 			if item.ExpiresAt() != 0 {
-				keys = append(keys, string(it.Item().Key()))
+				keys = append(keys, string(key))
 			}
 		}
 		return nil
