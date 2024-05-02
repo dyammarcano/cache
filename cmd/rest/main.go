@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const storePrefix = "store_cliApp"
+const storePrefix = "kv2cacheCliApp"
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -83,7 +83,7 @@ func restCmd(cmd *cobra.Command, args []string) error {
 }
 
 func restServer(ctx context.Context, datastore, port string) error {
-	cfg := &kv.Config{
+	cfg := &kv2cache.Config{
 		StorePath: datastore,
 	}
 
@@ -91,12 +91,12 @@ func restServer(ctx context.Context, datastore, port string) error {
 		return fmt.Errorf("error validating config: %w", err)
 	}
 
-	newKV, err := kv.NewKV(ctx, cfg)
+	newKV, err := kv2cache.NewCache(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("error creating new store: %w", err)
 	}
 
-	defer func(newKV *kv.KV) {
+	defer func(newKV *kv2cache.KV) {
 		if err = newKV.Close(); err != nil {
 			fmt.Println("error closing store: %w", err)
 		}
@@ -115,7 +115,7 @@ func restServer(ctx context.Context, datastore, port string) error {
 	r.Group(func(r chi.Router) {
 		r.Get("/keys/{key}", func(w http.ResponseWriter, r *http.Request) {
 			key := chi.URLParam(r, "key")
-			keys, err := newKV.Keys(newKV.MakeKeyStr(storePrefix, key))
+			keys, err := newKV.Keys(fmt.Sprintf("%s#%s", storePrefix, key))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -125,7 +125,7 @@ func restServer(ctx context.Context, datastore, port string) error {
 
 		r.Get("/key/{key}", func(w http.ResponseWriter, r *http.Request) {
 			key := chi.URLParam(r, "key")
-			value, err := newKV.Get(newKV.MakeKeyStr(storePrefix, key))
+			value, err := newKV.Get(fmt.Sprintf("%s#%s", storePrefix, key))
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -152,11 +152,11 @@ func restServer(ctx context.Context, datastore, port string) error {
 				return
 			}
 			if ttl == "" {
-				if err := newKV.Set(newKV.MakeKeyStr(storePrefix, key), []byte(data)); err != nil {
+				if err := newKV.Set(fmt.Sprintf("%s#%s", storePrefix, key), []byte(data)); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
-				w.Write([]byte(fmt.Sprintf("data stored, key: %s", newKV.MakeKeyStr(storePrefix, key))))
+				w.Write([]byte(fmt.Sprintf("data stored, key: %s", fmt.Sprintf("%s#%s", storePrefix, key))))
 			}
 
 			ttlTime, err := time.ParseDuration(ttl)
@@ -165,11 +165,11 @@ func restServer(ctx context.Context, datastore, port string) error {
 				return
 			}
 
-			if err := newKV.SetExpire(newKV.MakeKeyStr(storePrefix, key), []byte(data), ttlTime); err != nil {
+			if err := newKV.SetExpire(fmt.Sprintf("%s#%s", storePrefix, key), []byte(data), ttlTime); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			w.Write([]byte(fmt.Sprintf("data stored, key: %s", newKV.MakeKeyStr(storePrefix, key))))
+			w.Write([]byte(fmt.Sprintf("data stored, key: %s", fmt.Sprintf("%s#%s", storePrefix, key))))
 		})
 	})
 

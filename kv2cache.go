@@ -27,7 +27,7 @@ type (
 	}
 )
 
-func NewStore(ctx context.Context, cfg *Config) (*KV, error) {
+func NewCache(ctx context.Context, cfg *Config) (*KV, error) {
 	if !cfg.validated {
 		return nil, fmt.Errorf("config not validated")
 	}
