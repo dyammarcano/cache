@@ -1,4 +1,4 @@
-package cache
+package kv2cache
 
 import (
 	"github.com/rs/zerolog"
