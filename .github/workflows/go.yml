@@ -1,0 +1,51 @@
+name: CI Build + Unit Test
+
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+    branches-ignore:
+      - main
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: stable
+
+      - name: Check gofmt passes
+        run: |
+          RESULT="$(gofmt -d -s .)"
+          if [ -n "$RESULT" ]; then
+          echo "Code is not properly formatted. Please run 'gofmt -w .'"
+          echo $RESULT
+          exit 1
+          fi
+
+      - name: Verify dependencies
+        run: |
+          go env -w GO111MODULE=on
+          go mod download
+          LINT_VERSION=1.54.1
+          curl -fsSL https://github.com/golangci/golangci-lint/releases/download/v${LINT_VERSION}/golangci-lint-${LINT_VERSION}-linux-amd64.tar.gz | \
+            tar xz --strip-components 1 --wildcards \*/golangci-lint
+          mkdir -p bin && mv golangci-lint bin/
+
+      - name: Install go/vulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Go vulncheck
+        run: govulncheck ./...
+
+      - name: Test
+        run: go test -v -race -p=1 ./...
+
+      - name: Run vet tool
+        run: go vet ./...
