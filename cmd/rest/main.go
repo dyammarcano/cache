@@ -123,6 +123,16 @@ func restServer(ctx context.Context, datastore, port string) error {
 			w.Write([]byte(fmt.Sprintf("Keys: %v", keys)))
 		})
 
+		r.Get("/keys/count/{key}", func(w http.ResponseWriter, r *http.Request) {
+			key := chi.URLParam(r, "key")
+			count, err := newKV.CountPrefix(fmt.Sprintf("%s#%s", storePrefix, key))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Write([]byte(fmt.Sprintf("Count: %d", count)))
+		})
+
 		r.Get("/key/{key}", func(w http.ResponseWriter, r *http.Request) {
 			key := chi.URLParam(r, "key")
 			value, err := newKV.Get(fmt.Sprintf("%s#%s", storePrefix, key))

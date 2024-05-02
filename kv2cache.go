@@ -363,10 +363,14 @@ func (k *KV) Keys(prefix string) ([]string, error) {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
-			keys = append(keys, string(it.Item().Key()))
+			item := it.Item()
+			if item.ExpiresAt() != 0 {
+				keys = append(keys, string(it.Item().Key()))
+			}
 		}
 		return nil
 	})
+
 	return keys, err
 }
 
