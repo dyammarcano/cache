@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-var global *KV
-
 type (
 	KV struct {
 		db      *badger.DB
@@ -28,10 +26,6 @@ type (
 		Keys []string `json:"keys"`
 	}
 )
-
-func SetGlobal(kv *KV) {
-	global = kv
-}
 
 func NewKV(ctx context.Context, cfg *Config) (*KV, error) {
 	if !cfg.validated {
@@ -72,6 +66,10 @@ func NewKV(ctx context.Context, cfg *Config) (*KV, error) {
 	}()
 
 	return kv, nil
+}
+
+func (k *KV) Close() error {
+	return k.db.Close()
 }
 
 func (k *KV) batchWriteAction() error {
@@ -118,19 +116,31 @@ func (k *KV) batchDeleteAction(batch []badger.Entry) error {
 	return nil
 }
 
-func (k *KV) MakeKey(prefix string, data []byte) []byte {
-	k.hasher.Reset()
-	if _, err := k.hasher.Write(data); err != nil {
-		return nil
-	}
-	return []byte(fmt.Sprintf("%s:%x", prefix, k.hasher.Sum(nil)))
-}
-
 func (k *KV) addEntryToBatch(batch *badger.Entry) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
 	k.entries = append(k.entries, batch)
+}
+
+func (k *KV) MakeKeyPrefix(prefix string, v []byte) []byte {
+	k.hasher.Reset()
+	if _, err := k.hasher.Write(v); err != nil {
+		return nil
+	}
+	return []byte(fmt.Sprintf("%s:%x", prefix, k.hasher.Sum(nil)))
+}
+
+func (k *KV) MakeKeyStr(prefix, v string) string {
+	k.hasher.Reset()
+	if _, err := k.hasher.Write([]byte(prefix)); err != nil {
+		return ""
+	}
+	if _, err := k.hasher.Write([]byte(v)); err != nil {
+		return ""
+	}
+
+	return fmt.Sprintf("%x", k.hasher.Sum(nil))
 }
 
 func (k *KV) AddToBatch(batch *badger.Entry) {
@@ -143,12 +153,12 @@ func (k *KV) AddNewEntryToBatch(key, value []byte, expiresAt time.Duration) {
 
 func (k *KV) Set(prefix string, value []byte) error {
 	return k.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(k.MakeKey(prefix, value), value)
+		return txn.Set(k.MakeKeyPrefix(prefix, value), value)
 	})
 }
 
 func (k *KV) SetExpire(prefix string, value []byte, expire time.Duration) error {
-	var entry = badger.NewEntry(k.MakeKey(prefix, value), value)
+	var entry = badger.NewEntry(k.MakeKeyPrefix(prefix, value), value)
 	if expire > time.Second {
 		entry = entry.WithTTL(expire)
 	}
@@ -156,20 +166,6 @@ func (k *KV) SetExpire(prefix string, value []byte, expire time.Duration) error 
 		return txn.SetEntry(entry)
 	})
 }
-
-//func (c *KV) HasPrefix(prefix string, key []byte) (bool, error) {
-//	var has bool
-//	err := c.db.View(func(txn *badger.Txn) error {
-//		it := txn.NewIterator(badger.DefaultIteratorOptions)
-//		defer it.Close()
-//		key = c.MakeKey(prefix,key)
-//		for it.Seek(key); it.ValidForPrefix(key); it.Next() {
-//			has = true
-//		}
-//		return nil
-//	})
-//	return has, err
-//}
 
 func (k *KV) Get(prefix string) ([]byte, error) {
 	value := make([]byte, 0)
@@ -422,3 +418,35 @@ func (k *KV) DeleteAll() error {
 func (k *KV) DropPrefix(prefix string) error {
 	return k.Delete([]byte(prefix))
 }
+
+func (k *KV) Keys(prefix string) ([]string, error) {
+	var keys []string
+
+	err := k.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		for it.Seek([]byte(prefix)); it.ValidForPrefix([]byte(prefix)); it.Next() {
+			keys = append(keys, string(it.Item().Key()))
+		}
+		return nil
+	})
+	return keys, err
+}
+
+func (k *KV) SetWithTTL(prefix string, value []byte, ttl time.Duration) error {
+	return k.SetExpire(prefix, value, ttl)
+}
+
+//func (c *KV) HasPrefix(prefix string, key []byte) (bool, error) {
+//	var has bool
+//	err := c.db.View(func(txn *badger.Txn) error {
+//		it := txn.NewIterator(badger.DefaultIteratorOptions)
+//		defer it.Close()
+//		key = c.MakeKeyPrefix(prefix,key)
+//		for it.Seek(key); it.ValidForPrefix(key); it.Next() {
+//			has = true
+//		}
+//		return nil
+//	})
+//	return has, err
+//}

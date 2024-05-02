@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestStore_MakeKey(t *testing.T) {
-	key := ss.MakeKey("testing", []byte("#########################################################3"))
+	key := ss.MakeKeyPrefix("testing", []byte("#########################################################3"))
 	assert.Equal(t, 24, len(key))
 	t.Log(string(key))
 }
