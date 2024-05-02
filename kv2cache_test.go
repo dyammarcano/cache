@@ -1,4 +1,4 @@
-package kv
+package kv2cache
 
 import (
 	"context"
@@ -22,8 +22,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	// Test NewKV
-	s, err := NewKV(context.Background(), cfg)
+	// Test NewStore
+	s, err := NewStore(context.Background(), cfg)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -39,7 +39,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestStore_MakeKey(t *testing.T) {
-	key := ss.MakeKeyPrefix("testing", []byte("#########################################################3"))
+	key := ss.MakeKey("testing", []byte("#########################################################"))
 	assert.Equal(t, 24, len(key))
 	t.Log(string(key))
 }
@@ -61,28 +61,24 @@ func TestStore_SetGet(t *testing.T) {
 }
 
 func TestStore_BulkInsert(t *testing.T) {
-	data := make([]string, 1000)
+	for i := 0; i < 1000; i++ {
+		data := fmt.Sprintf("###########################################################################:%d", i)
 
-	for i := 0; i < len(data); i++ {
-		data[i] = "###########################################################################"
-	}
-
-	for _, v := range data {
-		err := ss.SetExpire("k", []byte(v), time.Second*5)
+		err := ss.SetExpire("kk", []byte(data), time.Second*3)
 		assert.NoError(t, err)
 	}
 
 	// count keys
-	count, err := ss.CountPrefix("k")
+	count, err := ss.CountPrefix("kk")
 	assert.NoError(t, err)
 
-	assert.Equal(t, len(data), count)
+	assert.Equal(t, 1000, count)
 
 	// wait for expiration
 	<-time.After(time.Second * 6)
 
 	// count keys
-	count, err = ss.CountPrefix("k")
+	count, err = ss.CountPrefix("kk")
 	assert.NoError(t, err)
 
 	assert.Equal(t, 0, count)

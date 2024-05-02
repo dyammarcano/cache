@@ -1,4 +1,4 @@
-package kv
+package kv2cache
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ type (
 	}
 )
 
-func NewKV(ctx context.Context, cfg *Config) (*KV, error) {
+func NewStore(ctx context.Context, cfg *Config) (*KV, error) {
 	if !cfg.validated {
 		return nil, fmt.Errorf("config not validated")
 	}
@@ -37,7 +37,7 @@ func NewKV(ctx context.Context, cfg *Config) (*KV, error) {
 		return nil, err
 	}
 
-	kv := &KV{
+	store := &KV{
 		db:      db,
 		mu:      sync.RWMutex{},
 		entries: []*badger.Entry{},
@@ -45,87 +45,32 @@ func NewKV(ctx context.Context, cfg *Config) (*KV, error) {
 		hasher:  fnv.New64a(),
 	}
 
-	ticker := time.NewTicker(time.Microsecond)
 	go func() {
-		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
-				if err = kv.db.Close(); err != nil {
+				if err = store.db.Close(); err != nil {
 					zlog.Error().Msgf("Failed to close ss: %v", err)
 				}
 				return
-			case <-ticker.C:
-				if len(kv.entries) > 0 {
-					if err = kv.batchWriteAction(); err != nil {
-						zlog.Error().Msgf("failed to batch write: %v", err)
-					}
-				}
 			}
 		}
 	}()
 
-	return kv, nil
+	return store, nil
 }
 
 func (k *KV) Close() error {
 	return k.db.Close()
 }
 
-func (k *KV) batchWriteAction() error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-
-	if len(k.entries) > 0 {
-		nb := k.db.NewWriteBatch()
-		defer nb.Cancel()
-
-		for _, b := range k.entries {
-			if err := nb.SetEntry(b); err != nil {
-				return err
-			}
-		}
-
-		if err := nb.Flush(); err != nil {
-			return err
-		}
-
-		k.entries = []*badger.Entry{}
-	}
-
-	return nil
+func (k *KV) NewWriteBatch() *badger.WriteBatch {
+	return k.db.NewWriteBatch()
 }
 
-func (k *KV) batchDeleteAction(batch []badger.Entry) error {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-
-	nb := k.db.NewWriteBatch()
-	defer nb.Cancel()
-
-	for _, b := range batch {
-		if err := nb.Delete(b.Key); err != nil {
-			return err
-		}
-	}
-
-	if err := nb.Flush(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (k *KV) addEntryToBatch(batch *badger.Entry) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-
-	k.entries = append(k.entries, batch)
-}
-
-func (k *KV) MakeKeyPrefix(prefix string, v []byte) []byte {
+func (k *KV) MakeKey(prefix string, data []byte) []byte {
 	k.hasher.Reset()
-	if _, err := k.hasher.Write(v); err != nil {
+	if _, err := k.hasher.Write(data); err != nil {
 		return nil
 	}
 	return []byte(fmt.Sprintf("%s:%x", prefix, k.hasher.Sum(nil)))
@@ -143,24 +88,17 @@ func (k *KV) MakeKeyStr(prefix, v string) string {
 	return fmt.Sprintf("%x", k.hasher.Sum(nil))
 }
 
-func (k *KV) AddToBatch(batch *badger.Entry) {
-	k.addEntryToBatch(batch)
-}
-
-func (k *KV) AddNewEntryToBatch(key, value []byte, expiresAt time.Duration) {
-	k.addEntryToBatch(&badger.Entry{Key: key, Value: value, ExpiresAt: uint64(expiresAt)})
-}
-
 func (k *KV) Set(prefix string, value []byte) error {
 	return k.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(k.MakeKeyPrefix(prefix, value), value)
+		return txn.Set(k.MakeKey(prefix, value), value)
 	})
 }
 
 func (k *KV) SetExpire(prefix string, value []byte, expire time.Duration) error {
-	var entry = badger.NewEntry(k.MakeKeyPrefix(prefix, value), value)
-	if expire > time.Second {
-		entry = entry.WithTTL(expire)
+	entry := &badger.Entry{
+		Key:       k.MakeKey(prefix, value),
+		Value:     value,
+		ExpiresAt: uint64(time.Now().Add(expire).Unix()),
 	}
 	return k.db.Update(func(txn *badger.Txn) error {
 		return txn.SetEntry(entry)
@@ -330,9 +268,8 @@ func (k *KV) ValuesPrefixLimit(prefix string, limit int) ([][]byte, error) {
 }
 
 func (k *KV) FindLatestKey(prefix string) ([]byte, error) {
-	var latestKey []byte
+	latestKey := make([]byte, 0)
 	err := k.db.View(func(txn *badger.Txn) error {
-		latestKey = []byte{} // to avoid nil
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		for it.Seek([]byte(prefix)); it.Valid(); it.Next() {
@@ -393,8 +330,8 @@ func (k *KV) DeleteKeys(keys [][]byte) error {
 	return k.db.Update(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-		for _, k := range keys {
-			if err := txn.Delete(k); err != nil {
+		for _, i := range keys {
+			if err := txn.Delete(i); err != nil {
 				return err
 			}
 		}
@@ -436,17 +373,3 @@ func (k *KV) Keys(prefix string) ([]string, error) {
 func (k *KV) SetWithTTL(prefix string, value []byte, ttl time.Duration) error {
 	return k.SetExpire(prefix, value, ttl)
 }
-
-//func (c *KV) HasPrefix(prefix string, key []byte) (bool, error) {
-//	var has bool
-//	err := c.db.View(func(txn *badger.Txn) error {
-//		it := txn.NewIterator(badger.DefaultIteratorOptions)
-//		defer it.Close()
-//		key = c.MakeKeyPrefix(prefix,key)
-//		for it.Seek(key); it.ValidForPrefix(key); it.Next() {
-//			has = true
-//		}
-//		return nil
-//	})
-//	return has, err
-//}
